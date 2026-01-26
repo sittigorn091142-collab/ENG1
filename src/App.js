@@ -32,6 +32,7 @@ import {
   Store,
   Edit3,
   BarChart3,
+  ChevronDown,
 } from "lucide-react";
 
 // --- CONFIGURATION ---
@@ -139,10 +140,11 @@ const t = {
   tracker_title: "ติดตามงาน Open Showcase Elite",
   tracker_filter_area: "เลือกพื้นที่ (Area)",
   tracker_filter_team: "เลือกทีม (Team)",
+  tracker_search_placeholder: "ค้นหารหัสสาขา...",
   tracker_stat_total: "ทั้งหมด",
   tracker_stat_completed: "แก้ไขแล้ว",
   tracker_stat_remaining: "คงเหลือ (On process)",
-  tracker_breakdown_title: "งานคงเหลือรายพื้นที่",
+  tracker_breakdown_title: "งานคงเหลือรายพื้นที่ (เรียงจากมากไปน้อย)",
 
   col_store: "สาขา",
   col_asset: "อุปกรณ์",
@@ -218,6 +220,21 @@ const t = {
   status_doing: "กำลังทำ (Doing)",
   status_done: "เสร็จแล้ว (Done)",
 
+  stat_total: "เคสทั้งหมด",
+  stat_pending: "รอรับเรื่อง",
+  stat_analyzing: "กำลังวิเคราะห์",
+  stat_resolved: "เสร็จสิ้น",
+
+  col_date: "วัน-เวลา",
+  col_emp: "พนักงาน",
+  col_detail: "รายละเอียด",
+  col_img: "ไฟล์แนบ",
+  col_status: "สถานะ",
+  col_action: "จัดการ",
+
+  filter_search: "ค้นหา...",
+  filter_all: "ทุกหมวดหมู่",
+
   sys_img_error: "ขนาดไฟล์รวมต้องไม่เกิน 25MB ต่อการส่ง 1 ครั้ง",
 };
 
@@ -244,6 +261,7 @@ const App = () => {
   // Tracker Filters
   const [trackerArea, setTrackerArea] = useState("All");
   const [trackerTeam, setTrackerTeam] = useState("All");
+  const [trackerSearch, setTrackerSearch] = useState(""); // New: Search for branch
   const [editingBranch, setEditingBranch] = useState(null);
 
   // Files
@@ -310,7 +328,7 @@ const App = () => {
         );
       }
 
-      // 3. Branch Tracking
+      // 3. Branch Tracking (ปรับปรุงการดึงข้อมูลตามหัวข้อภาษาไทย)
       if (data.branchTracking) {
         const formattedBranches = data.branchTracking.map((item) => ({
           storeCode: item["Store Code"],
@@ -343,11 +361,8 @@ const App = () => {
     });
   };
 
-  // --- Optimized Submit Report ---
   const submitReport = async (e) => {
     e.preventDefault();
-
-    // 1. Validation
     const totalSize = attachments.reduce(
       (acc, curr) => acc + curr.file.size,
       0
@@ -356,12 +371,8 @@ const App = () => {
       setMessage({ type: "error", text: t.sys_img_error });
       return;
     }
-
     setSubmitting(true);
-    setMessage({ type: "info", text: "กำลังเตรียมข้อมูล..." }); // Initial feedback
-
     try {
-      // 2. Processing
       const processedAttachments = await Promise.all(
         attachments.map(async (att) => {
           const base64 = await convertToBase64(att.file);
@@ -383,21 +394,10 @@ const App = () => {
         attachments: processedAttachments,
       };
 
-      // 3. Sending with Timeout handling
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
-
-      setMessage({ type: "info", text: t.btn_sending });
-
       await fetch(WEB_APP_URL, {
         method: "POST",
         body: JSON.stringify(payload),
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
-
-      // 4. Success State
       setMessage({ type: "success", text: t.msg_success });
       setFormData({
         employeeId: "",
@@ -408,29 +408,19 @@ const App = () => {
         description: "",
       });
       setAttachments([]);
-
       setTimeout(() => setMessage(null), 3000);
     } catch (err) {
-      if (err.name === "AbortError") {
-        setMessage({
-          type: "error",
-          text: "ใช้เวลานานเกินไป กรุณาตรวจสอบอินเทอร์เน็ต",
-        });
-      } else {
-        // Fallback for CORS issue with Google Apps Script
-        console.warn("Submission error (likely CORS):", err);
-        setMessage({ type: "success", text: t.msg_success });
-        setFormData({
-          employeeId: "",
-          employeeName: "",
-          area: "",
-          team: "",
-          category: "กระบวนการ (Process)",
-          description: "",
-        });
-        setAttachments([]);
-        setTimeout(() => setMessage(null), 3000);
-      }
+      setMessage({ type: "success", text: t.msg_success });
+      setFormData({
+        employeeId: "",
+        employeeName: "",
+        area: "",
+        team: "",
+        category: "กระบวนการ (Process)",
+        description: "",
+      });
+      setAttachments([]);
+      setTimeout(() => setMessage(null), 3000);
     } finally {
       setSubmitting(false);
     }
@@ -478,7 +468,6 @@ const App = () => {
     }
 
     setSubmitting(true);
-    setMessage({ type: "info", text: "กำลังอัปเดต..." });
 
     // Optimistic Update
     const updatedBranches = branchData.map((b) =>
@@ -514,14 +503,11 @@ const App = () => {
       });
       setMessage({ type: "success", text: t.msg_success });
       setEditingBranch(null);
-      setAttachments([]);
+      setAttachments([]); // Clear files
       setTimeout(() => setMessage(null), 2000);
     } catch (err) {
-      setMessage({ type: "success", text: t.msg_success }); // CORS fallback
-      setEditingBranch(null);
-      setAttachments([]);
-      setTimeout(() => setMessage(null), 2000);
-      fetchData();
+      setMessage({ type: "error", text: "Update failed" });
+      fetchData(); // Revert
     } finally {
       setSubmitting(false);
     }
@@ -618,11 +604,18 @@ const App = () => {
     return branchData.filter((b) => {
       const matchArea = trackerArea === "All" || b.area === trackerArea;
       const matchTeam = trackerTeam === "All" || b.team === trackerTeam;
-      return matchArea && matchTeam;
+      // Add Search Filter
+      const matchSearch =
+        trackerSearch === "" ||
+        (b.storeCode || "")
+          .toLowerCase()
+          .includes(trackerSearch.toLowerCase()) ||
+        (b.asset || "").toLowerCase().includes(trackerSearch.toLowerCase());
+      return matchArea && matchTeam && matchSearch;
     });
-  }, [branchData, trackerArea, trackerTeam]);
+  }, [branchData, trackerArea, trackerTeam, trackerSearch]);
 
-  // Calculate Tracker Stats
+  // Calculate Tracker Stats with Sorting
   const trackerStats = useMemo(() => {
     const total = branchData.length;
     const remaining = branchData.filter(
@@ -707,12 +700,35 @@ const App = () => {
         cls: "bg-emerald-100 text-emerald-700 border-emerald-200",
       },
     };
-    const current = config[status] || config.Pending;
+    // Fix: Fallback to showing raw status if config key missing, or default to Pending only if null
+    const current = config[status] || {
+      label: status || t.status_pending,
+      cls: "bg-slate-100 text-slate-700 border-slate-200",
+    };
+    // Fix: Increased text size to text-xs (was 9px) and removed uppercase for Thai readability
     return (
       <span
         className={`px-2 py-1 rounded text-xs font-bold border ${current.cls}`}
       >
         {current.label}
+      </span>
+    );
+  };
+
+  const PriorityBadge = ({ p }) => {
+    const color =
+      p === "High"
+        ? "bg-red-100 text-red-700 border-red-200"
+        : p === "Medium"
+        ? "bg-orange-100 text-orange-700 border-orange-200"
+        : "bg-green-100 text-green-700 border-green-200";
+    const label =
+      p === "High" ? t.prio_high : p === "Medium" ? t.prio_med : t.prio_low;
+    return (
+      <span
+        className={`px-2 py-0.5 rounded text-[9px] font-bold border uppercase ${color}`}
+      >
+        {label}
       </span>
     );
   };
@@ -873,7 +889,7 @@ const App = () => {
         {message && (
           <div
             className={`mb-6 p-4 rounded-2xl flex items-center gap-3 border-2 ${
-              message.type === "success" || message.type === "info"
+              message.type === "success"
                 ? "bg-emerald-50 border-emerald-100 text-emerald-800"
                 : "bg-red-50 border-red-100 text-red-800"
             }`}
@@ -1391,8 +1407,9 @@ const App = () => {
                 {t.tracker_breakdown_title}
               </h3>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-3">
-                {Object.entries(trackerStats.remainingByArea).map(
-                  ([area, count]) => (
+                {Object.entries(trackerStats.remainingByArea)
+                  .sort(([, countA], [, countB]) => countB - countA)
+                  .map(([area, count]) => (
                     <div
                       key={area}
                       className={`p-3 rounded-2xl border text-center transition-all ${
@@ -1412,50 +1429,81 @@ const App = () => {
                         {count}
                       </div>
                     </div>
-                  )
-                )}
+                  ))}
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">
-                  {t.tracker_filter_area}
-                </label>
-                <select
-                  className="w-full p-3 rounded-xl border-2 border-slate-100 text-sm font-bold outline-none"
-                  value={trackerArea}
-                  onChange={(e) => {
-                    setTrackerArea(e.target.value);
-                    setTrackerTeam("All");
-                  }}
-                >
-                  <option value="All">All Areas</option>
-                  {Object.keys(AREA_DATA).map((area) => (
-                    <option key={area} value={area}>
-                      {area}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">
-                  {t.tracker_filter_team}
-                </label>
-                <select
-                  className="w-full p-3 rounded-xl border-2 border-slate-100 text-sm font-bold outline-none"
-                  value={trackerTeam}
-                  onChange={(e) => setTrackerTeam(e.target.value)}
-                  disabled={trackerArea === "All"}
-                >
-                  <option value="All">All Teams</option>
-                  {trackerArea !== "All" &&
-                    AREA_DATA[trackerArea].map((team) => (
-                      <option key={team} value={team}>
-                        {team}
-                      </option>
-                    ))}
-                </select>
+            {/* Filter & Search Section - Redesigned */}
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                {/* Search Bar - Takes up more space */}
+                <div className="md:col-span-6 lg:col-span-5">
+                  <label className="block text-xs font-bold text-slate-400 mb-2 ml-1 uppercase tracking-wider">
+                    {t.tracker_search_placeholder}
+                  </label>
+                  <div className="relative group">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                    <input
+                      type="text"
+                      placeholder={t.tracker_search_placeholder}
+                      className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-slate-100 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 transition-all placeholder:text-slate-300"
+                      value={trackerSearch}
+                      onChange={(e) => setTrackerSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Filters - Area & Team */}
+                <div className="md:col-span-3 lg:col-span-3">
+                  <label className="block text-xs font-bold text-slate-400 mb-2 ml-1 uppercase tracking-wider">
+                    {t.tracker_filter_area}
+                  </label>
+                  <div className="relative">
+                    <select
+                      className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 transition-all appearance-none cursor-pointer bg-white"
+                      value={trackerArea}
+                      onChange={(e) => {
+                        setTrackerArea(e.target.value);
+                        setTrackerTeam("All");
+                      }}
+                    >
+                      <option value="All">ทุกพื้นที่ (All Areas)</option>
+                      {Object.keys(AREA_DATA).map((area) => (
+                        <option key={area} value={area}>
+                          {area}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                      <ChevronDown className="w-4 h-4" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="md:col-span-3 lg:col-span-4">
+                  <label className="block text-xs font-bold text-slate-400 mb-2 ml-1 uppercase tracking-wider">
+                    {t.tracker_filter_team}
+                  </label>
+                  <div className="relative">
+                    <select
+                      className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 transition-all appearance-none cursor-pointer bg-white disabled:bg-slate-50 disabled:text-slate-300"
+                      value={trackerTeam}
+                      onChange={(e) => setTrackerTeam(e.target.value)}
+                      disabled={trackerArea === "All"}
+                    >
+                      <option value="All">ทุกทีม (All Teams)</option>
+                      {trackerArea !== "All" &&
+                        AREA_DATA[trackerArea].map((team) => (
+                          <option key={team} value={team}>
+                            {team}
+                          </option>
+                        ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                      <ChevronDown className="w-4 h-4" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
