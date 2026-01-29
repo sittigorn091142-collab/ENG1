@@ -12,7 +12,7 @@ import {
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInAnonymously } from "firebase/auth";
 import {
   LayoutDashboard,
   ClipboardList,
@@ -43,7 +43,7 @@ import {
 
 // --- 🔴 CONFIGURATION 🔴 ---
 
-// 1. รหัส Firebase ของคุณ (อัปเดตจากค่าที่คุณให้มา)
+// 1. รหัส Firebase ของคุณ (อัปเดตจากที่คุณให้มาล่าสุด)
 const firebaseConfig = {
   apiKey: "AIzaSyDb5Cn1VZoc1XDA8RwmBvJzPY7zHKRjVtQ",
   authDomain: "cpretailink-eng.firebaseapp.com",
@@ -53,7 +53,7 @@ const firebaseConfig = {
   appId: "1:375453355677:web:5f48fc5c052fe87037ce74",
 };
 
-// 2. ลิงก์ Google Apps Script ของคุณ (สำหรับเก็บรูปภาพ)
+// 2. ลิงก์ Google Apps Script สำหรับเก็บรูปภาพ (Hybrid Mode)
 const IMAGE_UPLOAD_URL =
   "https://script.google.com/macros/s/AKfycbwbKRP47ukTrfES5hrmSWXbHLRRUN_4_KlHOuSX4zgV7areWok9Q54TTBeSO_R6MsWpyg/exec";
 
@@ -136,12 +136,62 @@ const AREA_DATA = {
   NEU: ["NEU1", "NEU2", "NEU3", "NEU4SA", "NEU5SA", "NEU6SA"],
 };
 
-// --- APP COMPONENT ---
+// ข้อมูลสาขาตั้งต้น (สำหรับกดปุ่ม Import ครั้งแรก)
+const INITIAL_BRANCH_DATA = [
+  {
+    storeCode: "B16198",
+    area: "RSL",
+    team: "RSL6SA",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B16170",
+    area: "NEL",
+    team: "NEL4",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B16180",
+    area: "BW",
+    team: "BW3",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B00519",
+    area: "BN",
+    team: "BN3",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B00903",
+    area: "BE",
+    team: "BE2",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B04692",
+    area: "BN",
+    team: "BN2",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B16259",
+    area: "BE",
+    team: "BE6",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+  {
+    storeCode: "B15532",
+    area: "RC",
+    team: "RC5SA",
+    asset: "ตู้OPEN SHOWCASE ELITE 0.90ม.R404A",
+  },
+];
+
 const App = () => {
   const [role, setRole] = useState(null);
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [activeTab, setActiveTab] = useState("reports");
 
   const [reports, setReports] = useState([]);
   const [branchData, setBranchData] = useState([]);
@@ -165,9 +215,13 @@ const App = () => {
     description: "",
   });
 
-  // --- Auth & Listeners ---
+  // --- Real-time Listeners ---
   useEffect(() => {
+    // ล็อกอินอัตโนมัติแบบไม่ระบุตัวตน
     signInAnonymously(auth).catch(console.error);
+
+    setLoading(true);
+    // ฟังข้อมูลแจ้งปัญหา
     const unsubReports = onSnapshot(
       query(collection(db, "reports"), orderBy("createdAt", "desc")),
       (snap) => {
@@ -178,47 +232,72 @@ const App = () => {
             createdAt: d.data().createdAt?.toDate() || new Date(),
           }))
         );
+        setLoading(false);
       }
     );
+
+    // ฟังข้อมูลติดตามสาขา
     const unsubBranches = onSnapshot(collection(db, "branches"), (snap) => {
       setBranchData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+
     return () => {
       unsubReports();
       unsubBranches();
     };
   }, []);
 
-  // --- Utilities ---
-  const processFile = (file) => {
+  // --- Functions ---
+  const importInitialBranches = async () => {
+    if (!window.confirm("ต้องการนำเข้าข้อมูลสาขาตั้งต้นใช่หรือไม่?")) return;
+    setSubmitting(true);
+    try {
+      const batch = writeBatch(db);
+      INITIAL_BRANCH_DATA.forEach((b) => {
+        const d = doc(collection(db, "branches"));
+        batch.set(d, {
+          ...b,
+          status: "On process",
+          ticket: "",
+          remarks: "",
+          fileLinks: [],
+        });
+      });
+      await batch.commit();
+      setMessage({ type: "success", text: "นำเข้าข้อมูลสาขาสำเร็จ!" });
+    } catch (e) {
+      setMessage({ type: "error", text: "ผิดพลาด: " + e.message });
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMessage(null), 3000);
+    }
+  };
+
+  const compressImage = (file) => {
     return new Promise((resolve) => {
+      if (!file.type.startsWith("image/")) {
+        resolve({ base64: null, file: file });
+        return;
+      }
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        if (file.type.startsWith("image/")) {
-          const img = new Image();
-          img.src = event.target.result;
-          img.onload = () => {
-            const canvas = document.createElement("canvas");
-            const MAX_WIDTH = 1024;
-            const scale = MAX_WIDTH / img.width;
-            canvas.width = MAX_WIDTH;
-            canvas.height = img.height * (scale > 1 ? 1 : scale);
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve({
-              base64: canvas.toDataURL("image/jpeg", 0.7),
-              fileName: file.name,
-              mimeType: "image/jpeg",
-            });
-          };
-        } else {
+      reader.onload = (e) => {
+        const img = new Image();
+        img.src = e.target.result;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX_WIDTH = 1024;
+          const scale = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * (scale > 1 ? 1 : scale);
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           resolve({
-            base64: event.target.result,
-            fileName: file.name,
-            mimeType: file.type,
+            base64: canvas.toDataURL("image/jpeg", 0.7),
+            fileName: `file_${Date.now()}_${file.name}`,
+            mimeType: "image/jpeg",
           });
-        }
+        };
       };
     });
   };
@@ -228,8 +307,9 @@ const App = () => {
     setSubmitting(true);
     setMessage({ type: "info", text: "กำลังส่งข้อมูลและอัปโหลดไฟล์..." });
     try {
+      // 1. จัดการไฟล์และส่งไป Google Drive
       const processed = await Promise.all(
-        attachments.map((a) => processFile(a.file))
+        attachments.map((a) => compressImage(a.file))
       );
       const res = await fetch(IMAGE_UPLOAD_URL, {
         method: "POST",
@@ -238,6 +318,7 @@ const App = () => {
       const result = await res.json();
       const urls = result.urls || [];
 
+      // 2. บันทึกลง Firebase
       if (type === "report") {
         await addDoc(collection(db, "reports"), {
           ...formData,
@@ -273,23 +354,14 @@ const App = () => {
     }
   };
 
-  const updateStatus = async (id, newStatus) => {
+  const updateReportStatus = async (id, newStatus) => {
     await updateDoc(doc(db, "reports", id), { status: newStatus });
-  };
-
-  const handleFileChange = (e) => {
-    const files = Array.from(e.target.files).map((file) => ({
-      file,
-      preview: URL.createObjectURL(file),
-      type: file.type.startsWith("video") ? "video" : "image",
-    }));
-    setAttachments((prev) => [...prev, ...files]);
   };
 
   const filteredBranches = useMemo(() => {
     return branchData.filter((b) => {
-      const mSearch = b.storeCode
-        ?.toLowerCase()
+      const mSearch = (b.storeCode || "")
+        .toLowerCase()
         .includes(trackerSearch.toLowerCase());
       const mArea = trackerArea === "All" || b.area === trackerArea;
       const mTeam = trackerTeam === "All" || b.team === trackerTeam;
@@ -307,12 +379,14 @@ const App = () => {
     return {
       total: branchData.length,
       remaining: branchData.filter((b) => b.status === "On process").length,
+      completed: branchData.filter((b) => b.status !== "On process").length,
       breakdown: Object.entries(remByArea).sort((a, b) => b[1] - a[1]),
     };
   }, [branchData]);
 
-  // --- UI RENDER ---
+  // --- Views ---
 
+  // หน้าหลัก (Role Selection)
   if (!role)
     return (
       <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 font-sans">
@@ -320,16 +394,16 @@ const App = () => {
           <h1 className="text-4xl md:text-6xl font-black text-[#1e293b] mb-4 tracking-tight">
             ระบบบริหารงานวิศวกรรม
           </h1>
-          <h2 className="text-2xl md:text-3xl font-black text-[#2563eb] uppercase tracking-wider">
+          <h2 className="text-2xl md:text-3xl font-black text-[#2563eb] uppercase tracking-widest">
             หน่วยงานวิเคราะห์ CALL
           </h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl px-4">
-          {/* Card 1: แจ้งปัญหา */}
+          {/* แจ้งปัญหา */}
           <button
             onClick={() => setRole("reporter")}
-            className="group bg-white p-12 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-slate-100 hover:border-blue-500 transition-all flex flex-col items-center text-center"
+            className="group bg-white p-12 rounded-[2.5rem] shadow-xl border border-slate-100 hover:border-blue-500 transition-all flex flex-col items-center text-center"
           >
             <div className="bg-blue-50 p-6 rounded-full mb-8 text-[#2563eb] group-hover:scale-110 transition-transform shadow-inner">
               <PlusCircle size={64} />
@@ -342,10 +416,10 @@ const App = () => {
             </p>
           </button>
 
-          {/* Card 2: แดชบอร์ด */}
+          {/* แดชบอร์ด */}
           <button
             onClick={() => setRole("admin")}
-            className="group bg-white p-12 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-slate-100 hover:border-slate-800 transition-all flex flex-col items-center text-center"
+            className="group bg-white p-12 rounded-[2.5rem] shadow-xl border border-slate-100 hover:border-slate-800 transition-all flex flex-col items-center text-center"
           >
             <div className="bg-slate-50 p-6 rounded-full mb-8 text-[#1e293b] group-hover:scale-110 transition-transform shadow-inner">
               <LayoutDashboard size={64} />
@@ -358,10 +432,10 @@ const App = () => {
             </p>
           </button>
 
-          {/* Card 3: ติดตามงานสาขา */}
+          {/* ติดตามงานสาขา */}
           <button
             onClick={() => setRole("tracker")}
-            className="group bg-white p-12 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-slate-100 hover:border-orange-500 transition-all flex flex-col items-center text-center"
+            className="group bg-white p-12 rounded-[2.5rem] shadow-xl border border-slate-100 hover:border-orange-500 transition-all flex flex-col items-center text-center"
           >
             <div className="bg-orange-50 p-6 rounded-full mb-8 text-[#f97316] group-hover:scale-110 transition-transform shadow-inner">
               <MapPin size={64} />
@@ -383,7 +457,7 @@ const App = () => {
       </div>
     );
 
-  // --- Admin Login ---
+  // ล็อกอิน Admin
   if (role === "admin" && !isAdminLoggedIn)
     return (
       <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-4">
@@ -441,6 +515,7 @@ const App = () => {
       </div>
     );
 
+  // ส่วนแสดงผลหลัก (หลังเลือกบทบาท)
   return (
     <div className="min-h-screen bg-[#f1f5f9] font-sans pb-12">
       <header
@@ -450,7 +525,7 @@ const App = () => {
             : role === "tracker"
             ? "bg-[#c2410c]"
             : "bg-[#1d4ed8]"
-        } text-white p-5 shadow-xl sticky top-0 z-40`}
+        } text-white p-5 shadow-xl sticky top-0 z-40 transition-colors`}
       >
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
@@ -471,11 +546,21 @@ const App = () => {
                 : "ระบบแจ้งปัญหาหน้างาน"}
             </h1>
           </div>
-          <RefreshCw
-            className={loading ? "animate-spin" : "cursor-pointer"}
-            onClick={() => window.location.reload()}
-            size={20}
-          />
+          <div className="flex items-center gap-4">
+            {role === "admin" && (
+              <button
+                onClick={importInitialBranches}
+                className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-xs font-black uppercase flex items-center gap-2 border border-white/20 transition-all"
+              >
+                <Database size={14} /> Import Data
+              </button>
+            )}
+            <RefreshCw
+              className={loading ? "animate-spin" : "cursor-pointer"}
+              onClick={() => window.location.reload()}
+              size={20}
+            />
+          </div>
         </div>
       </header>
 
@@ -485,6 +570,8 @@ const App = () => {
             className={`p-4 rounded-2xl mb-8 font-black text-center border-2 shadow-lg animate-in slide-in-from-top-4 ${
               message.type === "success"
                 ? "bg-emerald-50 border-emerald-100 text-emerald-800"
+                : message.type === "error"
+                ? "bg-red-50 border-red-100 text-red-800"
                 : "bg-blue-50 border-blue-100 text-blue-800"
             }`}
           >
@@ -492,11 +579,11 @@ const App = () => {
           </div>
         )}
 
-        {/* --- VIEW: REPORTER --- */}
+        {/* --- ROLE: REPORTER --- */}
         {role === "reporter" && (
           <form
             onSubmit={(e) => handleSubmission(e, "report")}
-            className="bg-white p-10 rounded-[3rem] shadow-xl max-w-2xl mx-auto border border-slate-100 space-y-6"
+            className="bg-white p-10 rounded-[3rem] shadow-xl max-w-2xl mx-auto border border-slate-100 space-y-6 animate-in slide-in-from-bottom-4"
           >
             <h2 className="text-2xl font-black text-center text-blue-600 uppercase tracking-tighter">
               แบบฟอร์มแจ้งปัญหา
@@ -599,7 +686,15 @@ const App = () => {
                   type="file"
                   multiple
                   className="absolute inset-0 opacity-0 cursor-pointer"
-                  onChange={handleFileChange}
+                  onChange={(e) =>
+                    setAttachments(
+                      Array.from(e.target.files).map((file) => ({
+                        file,
+                        preview: URL.createObjectURL(file),
+                        type: file.type.startsWith("video") ? "video" : "image",
+                      }))
+                    )
+                  }
                   accept="image/*,video/*"
                 />
                 <Camera
@@ -625,7 +720,7 @@ const App = () => {
           </form>
         )}
 
-        {/* --- VIEW: TRACKER --- */}
+        {/* --- ROLE: TRACKER --- */}
         {role === "tracker" && (
           <div className="space-y-8 animate-in fade-in duration-500">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -781,7 +876,7 @@ const App = () => {
           </div>
         )}
 
-        {/* --- VIEW: ADMIN --- */}
+        {/* --- ROLE: ADMIN --- */}
         {role === "admin" && isAdminLoggedIn && (
           <div className="space-y-8 animate-in fade-in duration-700">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
@@ -825,7 +920,7 @@ const App = () => {
                   {reports.map((r) => (
                     <tr
                       key={r.id}
-                      className="hover:bg-slate-50/50 transition-colors font-bold"
+                      className="hover:bg-slate-50/50 transition-colors"
                     >
                       <td className="p-8">
                         <div className="font-black text-slate-800 text-base">
@@ -851,7 +946,9 @@ const App = () => {
                       <td className="p-8">
                         <select
                           value={r.status}
-                          onChange={(e) => updateStatus(r.id, e.target.value)}
+                          onChange={(e) =>
+                            updateReportStatus(r.id, e.target.value)
+                          }
                           className={`p-3 rounded-xl text-[11px] font-black border-2 outline-none uppercase tracking-widest transition-all ${
                             r.status === "Resolved"
                               ? "bg-emerald-50 border-emerald-200 text-emerald-700"
@@ -875,7 +972,7 @@ const App = () => {
         )}
       </main>
 
-      {/* --- MODALS --- */}
+      {/* --- MODAL: EDIT BRANCH --- */}
       {editingBranch && (
         <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
           <div className="bg-white p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in-95">
@@ -924,7 +1021,15 @@ const App = () => {
                   type="file"
                   multiple
                   className="absolute inset-0 opacity-0 cursor-pointer"
-                  onChange={handleFileChange}
+                  onChange={(e) =>
+                    setAttachments(
+                      Array.from(e.target.files).map((file) => ({
+                        file,
+                        preview: URL.createObjectURL(file),
+                        type: file.type.startsWith("video") ? "video" : "image",
+                      }))
+                    )
+                  }
                   accept="image/*,video/*"
                 />
                 <Camera size={32} className="mx-auto text-slate-300 mb-2" />
@@ -958,6 +1063,7 @@ const App = () => {
         </div>
       )}
 
+      {/* --- MODAL: GALLERY --- */}
       {selectedReportFiles && (
         <div
           className="fixed inset-0 bg-black/98 z-[100] p-6 flex flex-col items-center justify-center backdrop-blur-3xl"
@@ -982,7 +1088,7 @@ const App = () => {
                   src={link.replace("/view", "/preview")}
                   className="w-full border-0 min-h-[400px] bg-slate-900"
                   allow="autoplay"
-                  title={`preview-${i}`}
+                  title={`evidence-${i}`}
                 />
                 <div className="p-5 bg-slate-900 flex justify-between items-center border-t border-slate-800">
                   <div className="flex items-center gap-3">
@@ -1011,7 +1117,7 @@ const App = () => {
   );
 };
 
-// --- Helper StatCard ---
+// --- Helper Components ---
 const StatCard = ({ label, value, color, icon }) => (
   <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
     <div className={`${color} text-white p-5 rounded-[1.5rem] shadow-xl`}>
@@ -1021,7 +1127,7 @@ const StatCard = ({ label, value, color, icon }) => (
       <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">
         {label}
       </p>
-      <p className="text-4xl font-black text-slate-900 tracking-tighter">
+      <p className="text-4xl font-black text-[#1e293b] tracking-tighter">
         {value}
       </p>
     </div>
