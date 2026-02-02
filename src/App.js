@@ -449,8 +449,8 @@ const App = () => {
           <MenuCard
             onClick={() => setRole("tracker")}
             icon={<MapPin size={56} />}
-            title="ติดตามงานสาขา"
-            desc="ติดตามงานซ่อมและเสนอราคา (Elite/Replace)"
+            title="Projects ลด Call แจ้งซ่อมวิศวกรรม"
+            desc="Tracking Projects รายสาขา"
             color="bg-orange-500 text-white shadow-orange-200 hover:bg-orange-600"
           />
         </div>
